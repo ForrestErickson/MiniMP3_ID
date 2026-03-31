@@ -3,7 +3,8 @@
 /* MiniMP3_ID.ino
 Author: Forrest Lee Erickson, with Chat GPT.
 Date: 20260331
- 
+Chat GPT session: https://chatgpt.com/c/69cbd8df-3bdc-832a-a179-4a67baa763be
+
 Program Requirements asked of Chat GPT:
 ESP32 WROOM embedded system. 
 We have as one of our preipherials a Mini MP3 player. 
