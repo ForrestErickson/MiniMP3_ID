@@ -1,3 +1,5 @@
+#define VERSION "Rev 0.0.1"
+
 /* MiniMP3_ID.ino
 Author: Forrest Lee Erickson, with Chat GPT.
 Date: 20260331
@@ -90,36 +92,68 @@ void detectMP3Module() {
   mp3_present = false;
   mp3_type = MP3_NONE;
 
-  // Flush any garbage
   while (Serial2.available()) Serial2.read();
 
-  // Try a DFPlayer "query status" command
-  sendDFCommand(0x3F);
+  // ---------- Step 1: Presence ----------
+  sendDFCommand(0x3F);  // status
+
+  if (!readFrame(resp, 200)) {
+    return;  // no device
+  }
+
+  mp3_present = true;
+
+  // ---------- Step 2: Try firmware query ----------
+  while (Serial2.available()) Serial2.read();
+  sendDFCommand(0x46);  // firmware version
 
   if (readFrame(resp, 200)) {
-    mp3_present = true;
-
-    // Check DFPlayer checksum
+    // Validate checksum
     uint16_t sum = 0;
-    for (int i = 1; i < 7; i++) {
-      sum += resp[i];
-    }
+    for (int i = 1; i < 7; i++) sum += resp[i];
     sum = 0 - sum;
 
     uint16_t received = (resp[7] << 8) | resp[8];
 
     if (sum == received) {
       mp3_type = MP3_DFROBOT;
-    } else {
-      mp3_type = MP3_TD5580A;
+      return;
     }
   }
-}
+
+  // ---------- Step 3: Try file count ----------
+  while (Serial2.available()) Serial2.read();
+  sendDFCommand(0x48);  // file count
+
+  if (readFrame(resp, 200)) {
+    uint16_t sum = 0;
+    for (int i = 1; i < 7; i++) sum += resp[i];
+    sum = 0 - sum;
+
+    uint16_t received = (resp[7] << 8) | resp[8];
+
+    if (sum == received) {
+      mp3_type = MP3_DFROBOT;
+      return;
+    }
+  }
+
+  // ---------- Step 4: Fallback ----------
+  mp3_type = MP3_TD5580A;
+}//end detection module
 
 
 void setup() {
   Serial.begin(115200);
-
+  while(!Serial){
+    ;
+  }
+   Serial.println(F("======== " __FILE_NAME__ " " VERSION "========"));    
+  Serial.print(F("Compiler: "));
+  Serial.println(__cplusplus); // Defined when the C++ compiler is in use
+  Serial.print(F("Compiled at: "));
+  Serial.println(F(__DATE__ " " __TIME__));  //compile date that is used for a unique identifier
+  
   // Arduino-style UART2 init
   Serial2.begin(9600, SERIAL_8N1, MP3_RX, MP3_TX);
 
