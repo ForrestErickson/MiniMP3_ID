@@ -32,7 +32,55 @@ enum Mp3Type {
 
 Mp3Type mp3_type = MP3_NONE;
 
+#define MP3_BUSY 4
+
+uint32_t mp3_response_time_ms = 0;
+
+
 //Functions
+
+bool readFrameTimed(uint8_t *buf, uint32_t timeout_ms, uint32_t &responseTime) {
+  uint32_t start = millis();
+  uint32_t firstByteTime = 0;
+  int idx = 0;
+
+  while (millis() - start < timeout_ms) {
+    if (Serial2.available()) {
+      uint8_t b = Serial2.read();
+
+      if (idx == 0) {
+        if (b != 0x7E) continue;
+        firstByteTime = millis();
+      }
+
+      buf[idx++] = b;
+
+      if (idx == 10) {
+        if (buf[9] == 0xEF) {
+          responseTime = firstByteTime - start;
+          return true;
+        } else {
+          idx = 0;
+        }
+      }
+    }
+  }
+  return false;
+}//end read FramTimed()
+
+bool readBusyStable(uint32_t sample_ms = 20) {
+  int highCount = 0;
+  int lowCount = 0;
+
+  uint32_t start = millis();
+  while (millis() - start < sample_ms) {
+    if (digitalRead(MP3_BUSY)) highCount++;
+    else lowCount++;
+    delay(1);
+  }
+
+  return (highCount > lowCount);  // true = HIGH
+}// end readBusyStable()
 
 //Send Command (DFPlayer Frame)
 void sendDFCommand(uint8_t cmd, uint16_t param = 0) {
@@ -91,56 +139,41 @@ void detectMP3Module() {
 
   mp3_present = false;
   mp3_type = MP3_NONE;
+  mp3_response_time_ms = 0;
 
   while (Serial2.available()) Serial2.read();
 
-  // ---------- Step 1: Presence ----------
-  sendDFCommand(0x3F);  // status
+  // --- BUSY idle state ---
+  bool busy_idle = readBusyStable();
 
-  if (!readFrame(resp, 200)) {
-    return;  // no device
+  // --- Send command ---
+  uint32_t responseTime = 0;
+
+  sendDFCommand(0x3F);
+
+  if (!readFrameTimed(resp, 300, responseTime)) {
+    return;
   }
 
   mp3_present = true;
+  mp3_response_time_ms = responseTime;
 
-  // ---------- Step 2: Try firmware query ----------
-  while (Serial2.available()) Serial2.read();
-  sendDFCommand(0x46);  // firmware version
+  // --- BUSY after command ---
+  bool busy_after = readBusyStable();
 
-  if (readFrame(resp, 200)) {
-    // Validate checksum
-    uint16_t sum = 0;
-    for (int i = 1; i < 7; i++) sum += resp[i];
-    sum = 0 - sum;
-
-    uint16_t received = (resp[7] << 8) | resp[8];
-
-    if (sum == received) {
-      mp3_type = MP3_DFROBOT;
-      return;
-    }
+  // --- Classification heuristic ---
+  if (responseTime >= 15) {
+    mp3_type = MP3_DFROBOT;
+  } else {
+    mp3_type = MP3_TD5580A;
   }
 
-  // ---------- Step 3: Try file count ----------
-  while (Serial2.available()) Serial2.read();
-  sendDFCommand(0x48);  // file count
-
-  if (readFrame(resp, 200)) {
-    uint16_t sum = 0;
-    for (int i = 1; i < 7; i++) sum += resp[i];
-    sum = 0 - sum;
-
-    uint16_t received = (resp[7] << 8) | resp[8];
-
-    if (sum == received) {
-      mp3_type = MP3_DFROBOT;
-      return;
-    }
+  // Optional refinement using BUSY behavior
+  if (busy_idle == LOW && busy_after == LOW) {
+    mp3_type = MP3_TD5580A;
   }
-
-  // ---------- Step 4: Fallback ----------
-  mp3_type = MP3_TD5580A;
-}//end detection module
+}
+//end detection module
 
 
 void setup() {
@@ -154,10 +187,12 @@ void setup() {
   Serial.print(F("Compiled at: "));
   Serial.println(F(__DATE__ " " __TIME__));  //compile date that is used for a unique identifier
   
+   pinMode(MP3_BUSY, INPUT);
+
   // Arduino-style UART2 init
   Serial2.begin(9600, SERIAL_8N1, MP3_RX, MP3_TX);
 
-  delay(500);  // Allow module to boot
+ delay(800);  // allow module to fully boot
 
   detectMP3Module();
 
@@ -166,12 +201,19 @@ void setup() {
 
   if (!mp3_present) {
     Serial.println("No MP3 module detected");
+    return;
+  }
+
+  Serial.print("Response Time (ms): ");
+  Serial.println(mp3_response_time_ms);
+
+  Serial.print("BUSY Idle State: ");
+  Serial.println(digitalRead(MP3_BUSY) ? "HIGH" : "LOW");
+
+  if (mp3_type == MP3_DFROBOT) {
+    Serial.println("Classified: DFRobot DFPlayer");
   } else {
-    if (mp3_type == MP3_DFROBOT) {
-      Serial.println("DFRobot DFPlayer Mini detected");
-    } else if (mp3_type == MP3_TD5580A) {
-      Serial.println("TD5580A-based module detected");
-    }
+    Serial.println("Classified: TD5580A variant");
   }
 }
 
