@@ -18,6 +18,9 @@ That test will be developed next.
 
 */
 
+//TODO
+// BUSY Idle State: reports LOW when module is plugged in backwards.
+
 //#include <Arduino.h>
 
 #define MP3_RX 16
